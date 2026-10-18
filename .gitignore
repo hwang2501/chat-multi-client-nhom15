@@ -1,0 +1,31 @@
+# Build
+target/
+build/
+dist/
+bin/
+out/
+*.class
+
+# NetBeans
+nbproject/private/
+nbbuild/
+nbdist/
+nb-configuration.xml
+
+# IDE khác
+.idea/
+.vscode/
+*.iml
+
+# Nhị phân, nén
+*.jar
+*.war
+*.zip
+*.rar
+
+# Hệ điều hành, log, bí mật
+.DS_Store
+Thumbs.db
+*.log
+*.pem
+*.key
