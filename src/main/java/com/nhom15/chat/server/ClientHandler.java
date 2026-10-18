@@ -51,11 +51,42 @@ public class ClientHandler implements Runnable {
             case "LOGIN":
                 login(m);
                 return true;
+            case "MSG_PRIVATE":
+                privateMessage(m);
+                return true;
+            case "MSG_GROUP":
+                groupMessage(m);
+                return true;
             case "LOGOUT":
                 return false;
             default:
-                // MSG_PRIVATE, MSG_GROUP: làm ở Issue #6.
                 return true;
+        }
+    }
+
+    /** Chat 1-1: chuyển tiếp tới đúng người nhận và gửi lại bản sao cho người gửi. */
+    private void privateMessage(Message m) throws IOException {
+        if (username == null) return; // chưa đăng nhập thì bỏ qua
+        Message msg = new Message("MSG_PRIVATE", username, m.to, m.content); // ép from = người gửi thật
+        ClientHandler target = (m.to == null) ? null : online.get(m.to);
+        if (target == null) {
+            send(new Message("ERROR", "server", username, "Người nhận không online: " + m.to));
+            return;
+        }
+        target.send(msg);
+        if (target != this) send(msg);
+    }
+
+    /** Chat nhóm: gửi cho tất cả người đang online. */
+    private void groupMessage(Message m) {
+        if (username == null) return;
+        Message msg = new Message("MSG_GROUP", username, "ALL", m.content);
+        for (ClientHandler h : online.values()) {
+            try {
+                h.send(msg);
+            } catch (IOException e) {
+                System.out.println("[SERVER] Không gửi được cho một client, bỏ qua");
+            }
         }
     }
 
