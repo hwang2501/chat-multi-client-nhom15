@@ -6,6 +6,9 @@ import com.nhom15.chat.common.Message;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.io.File;
 import java.net.Socket;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -56,6 +59,15 @@ public class ClientHandler implements Runnable {
                 return true;
             case "MSG_GROUP":
                 groupMessage(m);
+                return true;
+            case "FILE_OFFER":
+                fileOffer(m);
+                return true;
+            case "FILE_ACCEPT":
+                fileAnswer(m, true);
+                return true;
+            case "FILE_REJECT":
+                fileAnswer(m, false);
                 return true;
             case "LOGOUT":
                 return false;
@@ -109,6 +121,52 @@ public class ClientHandler implements Runnable {
         System.out.println("[SERVER] Đăng nhập: " + username + " | Online: " + online.size());
         send(new Message("LOGIN_OK", "server", username, "Đăng nhập thành công"));
         broadcastUserList();
+    }
+
+    /** Nhận đề nghị gửi file, tạo mã truyền và chuyển cho người nhận. */
+    private void fileOffer(Message m) {
+        if (username == null) return;
+        ClientHandler target = (m.to == null) ? null : online.get(m.to);
+        if (target == null || m.to.equals(username)) {
+            sendQuiet(this, new Message("ERROR", "server", username, "Người nhận không online: " + m.to));
+            return;
+        }
+        try {
+            JsonObject o = JsonParser.parseString(m.content).getAsJsonObject();
+            String fileName = new File(o.get("fileName").getAsString()).getName(); // bỏ đường dẫn
+            long size = o.get("size").getAsLong();
+            if (size <= 0 || size > FileRelayServer.MAX_SIZE) {
+                sendQuiet(this, new Message("ERROR", "server", username, "Kích thước file không hợp lệ"));
+                return;
+            }
+            FileRelayServer.Transfer t = FileRelayServer.register(username, m.to, fileName, size);
+            JsonObject out2 = new JsonObject();
+            out2.addProperty("fileName", fileName);
+            out2.addProperty("size", size);
+            out2.addProperty("transferId", t.id);
+            sendQuiet(target, new Message("FILE_OFFER", username, m.to, out2.toString()));
+        } catch (RuntimeException e) {
+            sendQuiet(this, new Message("ERROR", "server", username, "FILE_OFFER không hợp lệ"));
+        }
+    }
+
+    /** Người nhận đồng ý hoặc từ chối; báo lại cho người gửi. */
+    private void fileAnswer(Message m, boolean ok) {
+        if (username == null) return;
+        FileRelayServer.Transfer t = FileRelayServer.get(m.content);
+        if (t == null || !t.receiver.equals(username)) {
+            sendQuiet(this, new Message("ERROR", "server", username, "Mã truyền file không hợp lệ"));
+            return;
+        }
+        if (ok) t.accepted = true; else FileRelayServer.remove(t.id);
+        ClientHandler sender = online.get(t.sender);
+        if (sender != null) {
+            sendQuiet(sender, new Message(ok ? "FILE_ACCEPT" : "FILE_REJECT", username, t.sender, t.id));
+        }
+    }
+
+    private void sendQuiet(ClientHandler h, Message msg) {
+        try { h.send(msg); } catch (IOException ignored) { }
     }
 
     private void disconnect() {
