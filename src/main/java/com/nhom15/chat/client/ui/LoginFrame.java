@@ -1,5 +1,7 @@
 package com.nhom15.chat.client.ui;
 
+import com.nhom15.chat.client.ChatClient;
+import java.io.IOException;
 import javax.swing.*;
 import java.awt.*;
 
@@ -54,8 +56,46 @@ public class LoginFrame extends JFrame {
             lblStatus.setText("Vui lòng nhập đủ tên và IP");
             return;
         }
-        // Kết nối thật tới server sẽ làm ở Issue #5 (ChatFrame + SocketListenerThread).
-        lblStatus.setText("Sẵn sàng kết nối " + host + ":" + port + " với tên " + user);
+
+        final String fUser = user;
+        final String fHost = host;
+        final int fPort = port;
+        btnLogin.setEnabled(false);
+        lblStatus.setText("Đang kết nối...");
+
+        // Kết nối và đăng nhập chạy nền để không làm đứng giao diện
+        new SwingWorker<String, Void>() {
+            private final ChatClient client = new ChatClient();
+
+            @Override
+            protected String doInBackground() {
+                try {
+                    client.connect(fHost, fPort);
+                    return client.login(fUser);
+                } catch (IOException e) {
+                    return "Không kết nối được: " + e.getMessage();
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String err = get();
+                    if (err == null) {
+                        new ChatFrame(client).setVisible(true);
+                        dispose();
+                    } else {
+                        client.close();
+                        lblStatus.setText(err);
+                        btnLogin.setEnabled(true);
+                    }
+                } catch (Exception e) {
+                    client.close();
+                    lblStatus.setText("Lỗi: " + e.getMessage());
+                    btnLogin.setEnabled(true);
+                }
+            }
+        }.execute();
     }
 
     public static void main(String[] args) {
