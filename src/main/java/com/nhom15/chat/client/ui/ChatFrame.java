@@ -1,10 +1,16 @@
 package com.nhom15.chat.client.ui;
 
 import com.nhom15.chat.client.ChatClient;
+import com.nhom15.chat.client.FileTransfer;
 import com.nhom15.chat.client.SocketListenerThread;
 import com.nhom15.chat.common.Message;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.awt.*;
+import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import javax.swing.*;
 
 public class ChatFrame extends JFrame implements SocketListenerThread.Listener {
@@ -16,6 +22,10 @@ public class ChatFrame extends JFrame implements SocketListenerThread.Listener {
     private final JList<String> lstUsers = new JList<>(userModel);
     private final JTextField txtInput = new JTextField();
     private final JButton btnSend = new JButton("Gửi");
+    private final JButton btnFile = new JButton("Gửi file");
+    private final JProgressBar progress = new JProgressBar(0, 100);
+    // file đang chờ người nhận trả lời: key = tên người nhận
+    private final Map<String, File> pendingSend = new HashMap<>();
 
     public ChatFrame(ChatClient client) {
         this.client = client;
@@ -37,14 +47,23 @@ public class ChatFrame extends JFrame implements SocketListenerThread.Listener {
 
         JPanel bottom = new JPanel(new BorderLayout(5, 0));
         bottom.add(txtInput, BorderLayout.CENTER);
-        bottom.add(btnSend, BorderLayout.EAST);
+        JPanel buttons = new JPanel(new GridLayout(1, 2, 5, 0));
+        buttons.add(btnFile);
+        buttons.add(btnSend);
+        bottom.add(buttons, BorderLayout.EAST);
+        progress.setStringPainted(true);
+        progress.setVisible(false);
+        JPanel south = new JPanel(new BorderLayout(0, 3));
+        south.add(progress, BorderLayout.NORTH);
+        south.add(bottom, BorderLayout.CENTER);
 
         setLayout(new BorderLayout(5, 5));
         add(new JScrollPane(txtChat), BorderLayout.CENTER);
         add(right, BorderLayout.EAST);
-        add(bottom, BorderLayout.SOUTH);
+        add(south, BorderLayout.SOUTH);
 
         btnSend.addActionListener(e -> sendMessage());
+        btnFile.addActionListener(e -> offerFile());
         txtInput.addActionListener(e -> sendMessage());
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override public void windowClosing(java.awt.event.WindowEvent e) { logoutAndExit(); }
@@ -83,12 +102,126 @@ public class ChatFrame extends JFrame implements SocketListenerThread.Listener {
             case "USER_LIST":
                 updateUsers(m.content);
                 break;
+            case "FILE_OFFER":
+                onFileOffer(m);
+                break;
+            case "FILE_ACCEPT":
+                onFileAccept(m);
+                break;
+            case "FILE_REJECT":
+                pendingSend.remove(m.from);
+                append("[File] " + m.from + " đã từ chối nhận file.");
+                break;
+            case "FILE_DONE":
+                onFileDone(m);
+                break;
             case "ERROR":
                 append("[Lỗi] " + m.content);
                 break;
             default:
                 break;
         }
+    }
+
+    /** Người gửi: chọn file và gửi lời mời FILE_OFFER cho người nhận đang chọn. */
+    private void offerFile() {
+        String target = lstUsers.getSelectedValue();
+        if (target == null || ALL.equals(target)) {
+            JOptionPane.showMessageDialog(this, "Hãy chọn một người trong danh sách online để gửi file.");
+            return;
+        }
+        JFileChooser fc = new JFileChooser();
+        if (fc.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        File f = fc.getSelectedFile();
+        if (!f.isFile() || f.length() <= 0) {
+            JOptionPane.showMessageDialog(this, "File rỗng hoặc không hợp lệ.");
+            return;
+        }
+        JsonObject o = new JsonObject();
+        o.addProperty("fileName", f.getName());
+        o.addProperty("size", f.length());
+        try {
+            pendingSend.put(target, f);
+            client.send(new Message("FILE_OFFER", client.getUsername(), target, o.toString()));
+            append("[File] Đã gửi lời mời " + f.getName() + " (" + f.length() + " byte) tới " + target + ", chờ trả lời...");
+        } catch (IOException ex) {
+            pendingSend.remove(target);
+            append("[Lỗi] Không gửi được lời mời: " + ex.getMessage());
+        }
+    }
+
+    /** Người nhận: hỏi đồng ý hay không, nếu đồng ý thì chọn nơi lưu và tải về. */
+    private void onFileOffer(Message m) {
+        JsonObject o = JsonParser.parseString(m.content).getAsJsonObject();
+        String fileName = o.get("fileName").getAsString();
+        long size = o.get("size").getAsLong();
+        String id = o.get("transferId").getAsString();
+        int ans = JOptionPane.showConfirmDialog(this,
+                m.from + " muốn gửi file \"" + fileName + "\" (" + size + " byte). Nhận không?",
+                "Nhận file", JOptionPane.YES_NO_OPTION);
+        try {
+            if (ans != JOptionPane.YES_OPTION) {
+                client.send(new Message("FILE_REJECT", client.getUsername(), m.from, id));
+                append("[File] Đã từ chối file của " + m.from);
+                return;
+            }
+            JFileChooser fc = new JFileChooser();
+            fc.setSelectedFile(new File(fileName));
+            if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+                client.send(new Message("FILE_REJECT", client.getUsername(), m.from, id));
+                return;
+            }
+            final File dest = fc.getSelectedFile();
+            client.send(new Message("FILE_ACCEPT", client.getUsername(), m.from, id));
+            append("[File] Đang nhận " + fileName + " từ " + m.from + "...");
+            runTransfer(() -> FileTransfer.receive(client.getHost(), client.getUsername(), id, dest, size, this::showProgress));
+        } catch (IOException ex) {
+            append("[Lỗi] " + ex.getMessage());
+        }
+    }
+
+    /** Người gửi: nhận FILE_ACCEPT (content = transferId) thì bắt đầu đẩy byte[]. */
+    private void onFileAccept(Message m) {
+        File f = pendingSend.remove(m.from);
+        if (f == null) return;
+        String id = m.content;
+        append("[File] " + m.from + " đã đồng ý, đang gửi " + f.getName() + "...");
+        runTransfer(() -> FileTransfer.send(client.getHost(), client.getUsername(), id, f, this::showProgress));
+    }
+
+    private void onFileDone(Message m) {
+        JsonObject o = JsonParser.parseString(m.content).getAsJsonObject();
+        append("[File] " + o.get("fileName").getAsString() + ": " + o.get("status").getAsString());
+        progress.setVisible(false);
+    }
+
+    private interface IOTask { void run() throws IOException; }
+
+    /** Chạy truyền file ở luồng riêng để giao diện không bị đơ. */
+    private void runTransfer(IOTask task) {
+        progress.setValue(0);
+        progress.setVisible(true);
+        Thread t = new Thread(() -> {
+            try {
+                task.run();
+            } catch (IOException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    append("[Lỗi] Truyền file thất bại: " + ex.getMessage());
+                    progress.setVisible(false);
+                });
+            }
+        }, "FileTransfer");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private volatile int lastPercent = -1;
+
+    private void showProgress(long done, long total) {
+        int pct = (int) (done * 100 / total);
+        if (pct == lastPercent) return;
+        lastPercent = pct;
+        SwingUtilities.invokeLater(() -> progress.setValue(pct));
     }
 
     private void updateUsers(String content) {
@@ -114,6 +247,7 @@ public class ChatFrame extends JFrame implements SocketListenerThread.Listener {
         append("[Hệ thống] Mất kết nối tới Server.");
         txtInput.setEnabled(false);
         btnSend.setEnabled(false);
+        btnFile.setEnabled(false);
     }
 
     private void logoutAndExit() {

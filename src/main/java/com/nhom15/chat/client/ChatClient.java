@@ -11,8 +11,10 @@ public class ChatClient {
     private DataInputStream in;
     private DataOutputStream out;
     private String username;
+    private String host;
 
     public void connect(String host, int port) throws IOException {
+        this.host = host;
         socket = new Socket();
         socket.connect(new InetSocketAddress(host, port), 5000);
         in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
@@ -39,6 +41,8 @@ public class ChatClient {
     }
 
     public String getUsername() { return username; }
+
+    public String getHost() { return host; }
 
     public void close() {
         try { if (socket != null) socket.close(); } catch (IOException ignored) { }
