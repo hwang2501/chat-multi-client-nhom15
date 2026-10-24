@@ -13,3 +13,11 @@ byte[] qua socket riêng, mã hóa AES.
 
 ## Cách chạy
 (Cập nhật sau)
+
+## Console Test Client
+
+Dung de test Server khong can giao dien.
+
+    java -cp "target/classes;%USERPROFILE%\.m2\repository\com\google\code\gson\gson\2.10.1\gson-2.10.1.jar" com.nhom15.chat.consoleclient.ConsoleClient <host> <port> <ten>
+
+Lenh: /all <nd>, /to <ten> <nd>, /raw <JSON>, /oversize (thu goi > 1 MB), /quit.
