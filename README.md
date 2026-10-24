@@ -21,3 +21,14 @@ Dung de test Server khong can giao dien.
     java -cp "target/classes;%USERPROFILE%\.m2\repository\com\google\code\gson\gson\2.10.1\gson-2.10.1.jar" com.nhom15.chat.consoleclient.ConsoleClient <host> <port> <ten>
 
 Lenh: /all <nd>, /to <ten> <nd>, /raw <JSON>, /oversize (thu goi > 1 MB), /quit.
+
+## Kết quả kiểm thử
+
+| Kịch bản | Cách chạy | Kết quả |
+|---|---|---|
+| 10 client đăng nhập cùng lúc, mỗi client gửi 1 tin nhóm | `bash scripts/multi-client-test.sh localhost 10` | Cả 10 client nhận đủ 10 tin. Mỗi phiên mở kênh AES-256-GCM riêng. Đạt |
+| Gửi file 200 MB (209.715.200 byte) giữa hai client | Giao diện chat, cổng 5001 | Cả hai bên báo trạng thái OK, kích thước file nhận bằng file gốc. Đạt |
+| Gói tin vượt giới hạn 1 MB | `/oversize` trong Console Client | Server ngắt kết nối, không bị sập. Đạt |
+| Hai máy qua mạng Tailscale | Server ở máy nhóm trưởng, Client nhập IP 100.x.x.x | (điền sau khi demo xong) |
+
+Server vận hành bằng thread pool 50 luồng cho chat và 20 luồng cho truyền file. Khi truyền file, Server chỉ giữ 8 KB mỗi lần nên file 200 MB không làm đầy bộ nhớ.
