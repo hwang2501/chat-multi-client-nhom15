@@ -10,14 +10,22 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.File;
 import java.net.Socket;
+import com.nhom15.chat.common.CryptoUtil;
+import java.security.GeneralSecurityException;
+import java.security.KeyPair;
+import java.util.Base64;
+import javax.crypto.SecretKey;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientHandler implements Runnable {
+    // Cặp khóa RSA tạo mới mỗi lần Server chạy, không lưu trong code.
+    private static final KeyPair RSA = CryptoUtil.generateRsa();
     private final Socket socket;
     private final ConcurrentHashMap<String, ClientHandler> online;
     private DataInputStream in;
     private DataOutputStream out;
     private String username;
+    private volatile SecretKey aesKey; // null = chưa mã hóa
 
     public ClientHandler(Socket socket, ConcurrentHashMap<String, ClientHandler> online) {
         this.socket = socket;
@@ -26,7 +34,7 @@ public class ClientHandler implements Runnable {
 
     // synchronized: tránh hai luồng ghi chen nhau làm hỏng gói tin.
     public synchronized void send(Message m) throws IOException {
-        FramedIO.send(out, m);
+        FramedIO.send(out, m, aesKey);
     }
 
     @Override
@@ -36,7 +44,7 @@ public class ClientHandler implements Runnable {
             out = new DataOutputStream(socket.getOutputStream());
 
             while (true) {
-                Message m = FramedIO.receive(in);
+                Message m = FramedIO.receive(in, aesKey);
                 System.out.println("[SERVER] Nhận: " + m.toJson());
                 if (!handle(m)) break;
             }
@@ -51,6 +59,21 @@ public class ClientHandler implements Runnable {
     private boolean handle(Message m) throws IOException {
         if (m.action == null) return true;
         switch (m.action) {
+            case "PUBKEY_REQ":
+                send(new Message("PUBKEY", "server", "", CryptoUtil.publicKeyToBase64(RSA.getPublic())));
+                return true;
+            case "SESSION_KEY": {
+                try {
+                    byte[] raw = CryptoUtil.rsaDecrypt(RSA.getPrivate(), Base64.getDecoder().decode(m.content));
+                    SecretKey k = CryptoUtil.aesKeyFromBytes(raw);
+                    send(new Message("SECURE_OK", "server", "", "AES-256-GCM")); // gửi thường, sau đó mới mã hóa
+                    aesKey = k;
+                    System.out.println("[SERVER] Đã thiết lập AES-256-GCM với " + socket.getRemoteSocketAddress());
+                } catch (GeneralSecurityException | IllegalArgumentException e) {
+                    send(new Message("ERROR", "server", "", "Khóa phiên không hợp lệ"));
+                }
+                return true;
+            }
             case "LOGIN":
                 login(m);
                 return true;
