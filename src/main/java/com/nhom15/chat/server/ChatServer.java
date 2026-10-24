@@ -15,6 +15,7 @@ public class ChatServer {
     private final ExecutorService pool = Executors.newFixedThreadPool(50);
 
     public void start() throws Exception {
+        FileRelayServer.start(online);
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("[SERVER] Lắng nghe cổng " + PORT);
             while (true) {
